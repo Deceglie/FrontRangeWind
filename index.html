@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Denver Area Wind Model Comparison</title>
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 1.5rem;
+            background-color: #f8f9fa;
+            color: #333;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .header h1 {
+            color: #1a1a1a;
+            margin-bottom: 0.5rem;
+        }
+        .header p {
+            color: #666;
+            margin-top: 0;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+        button {
+            padding: 0.875rem 2rem;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0052a3;
+        }
+        button:disabled {
+            background-color: #94a3b8;
+            cursor: not-allowed;
+        }
+        .plot-container {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin-bottom: 2rem;
+        }
+        .plot-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: #0f172a;
+        }
+        .error {
+            color: #dc2626;
+            background-color: #fef2f2;
+            padding: 1rem;
+            border-radius: 6px;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>Denver Area Wind Model Comparison</h1>
+        <p>Comparing 72-hour forecast wind speeds across multiple models (HRRR, NBM, ECMWF, ICON, GEM)</p>
+    </div>
+
+    <div class="controls">
+        <button id="loadBtn" onclick="loadAllData()">Load Forecast Data</button>
+    </div>
+
+    <div id="dashboard"></div>
+
+    <script>
+        const locations = [
+            { name: 'Aurora Reservoir', lat: 39.6333, lon: -104.6575 },
+            { name: 'Chatfield Reservoir', lat: 39.5447, lon: -105.0744 },
+            { name: 'Union Reservoir', lat: 40.1414, lon: -104.9892 },
+            { name: 'Big Soda Lake', lat: 39.6450, lon: -105.1480 },
+            { name: 'Cherry Creek Reservoir', lat: 39.6439, lon: -104.8450 },
+            { name: 'Boulder Reservoir', lat: 40.0722, lon: -105.2155 },
+            { name: 'Lake Hattie', lat: 41.2383, lon: -105.9039 }
+        ];
+
+        // Match NWS duration blocks (e.g. 2026-10-10T12:00:00+00:00/PT2H)
+        function getNWSValueForTime(nwsProperty, targetTime) {
+            if (!nwsProperty || !nwsProperty.values) return null;
+            
+            for (let item of nwsProperty.values) {
+                const parts = item.validTime.split('/');
+                const start = new Date(parts[0]).getTime();
+                let end = start + 3600000; // default 1 hr
+                
+                const durationStr = parts[1];
+                if (durationStr) {
+                    let days = 0, hours = 0;
+                    const dMatch = durationStr.match(/(\d+)D/);
+                    if (dMatch) days = parseInt(dMatch[1], 10);
+                    const hMatch = durationStr.match(/(\d+)H/);
+                    if (hMatch) hours = parseInt(hMatch[1], 10);
+                    end = start + (days * 24 + hours) * 3600000;
+                }
+
+                if (targetTime >= start && targetTime < end) {
+                    return item.value;
+                }
+            }
+            return null;
+        }
+
+        async function fetchLocationData(loc) {
+            // 1. Open-Meteo for HRRR, ECMWF, ICON, GEM
+            const omParams = `hourly=wind_speed_10m&models=gfs_hrrr,ecmwf_ifs025,icon_global,gem_regional&forecast_hours=72&wind_speed_unit=mph&timezone=UTC`;
+            const omUrl = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&${omParams}`;
+            
+            let omData = null;
+            let nwsData = null;
+
+            try {
+                const omRes = await fetch(omUrl);
+                omData = await omRes.json();
+            } catch (err) {
+                console.error(`OM Fetch Error for ${loc.name}:`, err);
+            }
+
+            // 2. NWS API for NBM
+            try {
+                const ptRes = await fetch(`https://api.weather.gov/points/${loc.lat},${loc.lon}`);
+                if (ptRes.ok) {
+                    const ptJson = await ptRes.json();
+                    const gridUrl = ptJson.properties.forecastGridData;
+                    const gridRes = await fetch(gridUrl);
+                    if (gridRes.ok) {
+                        const gridJson = await gridRes.json();
+                        nwsData = gridJson.properties;
+                    }
+                }
+            } catch (err) {
+                console.error(`NWS Fetch Error for ${loc.name}:`, err);
+            }
+
+            return { loc, omData, nwsData };
+        }
+
+        function createPlot(containerId, dataObj) {
+            const { loc, omData, nwsData } = dataObj;
+            
+            if (!omData || !omData.hourly) {
+                document.getElementById(containerId).innerHTML = `<div class="error">Failed to load data for ${loc.name}</div>`;
+                return;
+            }
+
+            // Parse OM times (UTC)
+            const times = omData.hourly.time.map(t => new Date(t + 'Z'));
+            
+            // Build traces
+            const traces = [];
+            const colors = {
+                'HRRR': '#ef4444', // Red
+                'NBM': '#3b82f6', // Blue
+                'ECMWF': '#10b981', // Green
+                'ICON': '#f59e0b', // Yellow
+                'GEM': '#8b5cf6'  // Purple
+            };
+
+            if (omData.hourly.wind_speed_10m_gfs_hrrr) {
+                traces.push({
+                    x: times,
+                    y: omData.hourly.wind_speed_10m_gfs_hrrr,
+                    name: 'HRRR',
+                    type: 'scatter', mode: 'lines',
+                    line: { color: colors['HRRR'], width: 2 }
+                });
+            }
+
+            // NWS Data (NBM)
+            if (nwsData && nwsData.windSpeed) {
+                const nbmWind = times.map(d => {
+                    let val = getNWSValueForTime(nwsData.windSpeed, d.getTime());
+                    return val !== null ? val * 0.621371 : null; // km/h to mph
+                });
+                traces.push({
+                    x: times,
+                    y: nbmWind,
+                    name: 'NBM',
+                    type: 'scatter', mode: 'lines',
+                    line: { color: colors['NBM'], width: 2, dash: 'dash' }
+                });
+            }
+
+            if (omData.hourly.wind_speed_10m_ecmwf_ifs025) {
+                traces.push({
+                    x: times,
+                    y: omData.hourly.wind_speed_10m_ecmwf_ifs025,
+                    name: 'ECMWF IFS 9km',
+                    type: 'scatter', mode: 'lines',
+                    line: { color: colors['ECMWF'], width: 2 }
+                });
+            }
+
+            if (omData.hourly.wind_speed_10m_icon_global) {
+                traces.push({
+                    x: times,
+                    y: omData.hourly.wind_speed_10m_icon_global,
+                    name: 'ICON13',
+                    type: 'scatter', mode: 'lines',
+                    line: { color: colors['ICON'], width: 2 }
+                });
+            }
+
+            if (omData.hourly.wind_speed_10m_gem_regional) {
+                traces.push({
+                    x: times,
+                    y: omData.hourly.wind_speed_10m_gem_regional,
+                    name: 'GEM Regional',
+                    type: 'scatter', mode: 'lines',
+                    line: { color: colors['GEM'], width: 2 }
+                });
+            }
+
+            const layout = {
+                title: false,
+                height: 400,
+                margin: { t: 20, b: 50, l: 50, r: 20 },
+                xaxis: { 
+                    type: 'date',
+                    range: [times[0], times[times.length - 1]],
+                    title: 'Time (Local)'
+                },
+                yaxis: { 
+                    title: 'Wind Speed (mph)',
+                    range: [0, 30]
+                },
+                shapes: [
+                    {
+                        type: 'line',
+                        x0: times[0],
+                        x1: times[times.length - 1],
+                        y0: 10,
+                        y1: 10,
+                        line: {
+                            color: 'rgba(0, 0, 0, 0.5)',
+                            width: 2,
+                            dash: 'dot'
+                        }
+                    }
+                ],
+                hovermode: 'x unified',
+                legend: { orientation: 'h', y: -0.2 }
+            };
+
+            Plotly.newPlot(containerId, traces, layout, {responsive: true});
+        }
+
+        async function loadAllData() {
+            const btn = document.getElementById('loadBtn');
+            const dashboard = document.getElementById('dashboard');
+            
+            btn.disabled = true;
+            btn.innerText = "Loading Models...";
+            dashboard.innerHTML = "";
+
+            // Create containers
+            locations.forEach((loc, i) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'plot-container';
+                wrapper.innerHTML = `<div class="plot-title">${loc.name}</div><div id="plot-${i}">Loading...</div>`;
+                dashboard.appendChild(wrapper);
+            });
+
+            // Fetch in parallel
+            const fetchPromises = locations.map(loc => fetchLocationData(loc));
+            const results = await Promise.all(fetchPromises);
+
+            // Render
+            results.forEach((res, i) => {
+                document.getElementById(`plot-${i}`).innerHTML = "";
+                createPlot(`plot-${i}`, res);
+            });
+
+            btn.innerText = "Refresh Data";
+            btn.disabled = false;
+        }
+    </script>
+</body>
+</html>
