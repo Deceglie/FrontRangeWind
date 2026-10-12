@@ -28,10 +28,12 @@
         }
         .controls {
             display: flex;
-            justify-content: center;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
             margin-bottom: 2rem;
         }
-        button {
+        .main-btn {
             padding: 0.875rem 2rem;
             background-color: #0066cc;
             color: white;
@@ -42,16 +44,45 @@
             cursor: pointer;
             transition: background-color 0.2s;
         }
-        button:hover {
+        .main-btn:hover {
             background-color: #0052a3;
         }
-        button:disabled {
+        .main-btn:disabled {
             background-color: #94a3b8;
             cursor: not-allowed;
         }
+        .day-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            justify-content: center;
+        }
+        .day-btn {
+            padding: 0.6rem 1.1rem;
+            background-color: #ffffff;
+            color: #334155;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        .day-btn:hover {
+            background-color: #f1f5f9;
+            border-color: #94a3b8;
+            color: #0f172a;
+        }
+        .day-btn.active {
+            background-color: #0066cc;
+            color: #ffffff;
+            border-color: #0052a3;
+            font-weight: 600;
+        }
         .plot-container {
             background: white;
-            padding: 1.5rem;
+            padding: 1.25rem 1rem 1rem 1rem;
             border-radius: 12px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.05);
             margin-bottom: 2rem;
@@ -59,7 +90,7 @@
         .plot-title {
             font-size: 1.25rem;
             font-weight: 600;
-            margin-bottom: 1rem;
+            margin-bottom: 0.5rem;
             color: #0f172a;
         }
         .error {
@@ -79,7 +110,13 @@
     </div>
 
     <div class="controls">
-        <button id="loadBtn" onclick="loadAllData()">Load Forecast Data</button>
+        <button id="loadBtn" class="main-btn" onclick="loadAllData()">Load Forecast Data</button>
+        <div id="dayButtons" class="day-buttons">
+            <button class="day-btn" id="btn-day-0" onclick="zoomToDay(0)">Today</button>
+            <button class="day-btn" id="btn-day-1" onclick="zoomToDay(1)">Day 2</button>
+            <button class="day-btn" id="btn-day-2" onclick="zoomToDay(2)">Day 3</button>
+            <button class="day-btn active" id="btn-day-all" onclick="zoomToDay('all')">All 72h</button>
+        </div>
     </div>
 
     <div id="dashboard"></div>
@@ -231,14 +268,26 @@
                 });
             }
 
+            // Calculate active range if user has already picked a day
+            let initialRange = [times[0], times[times.length - 1]];
+            if (activeDayChoice !== 'all' && forecastStartDate) {
+                const targetDate = new Date(forecastStartDate.getFullYear(), forecastStartDate.getMonth(), forecastStartDate.getDate() + activeDayChoice);
+                const startOfDay = activeDayChoice === 0
+                    ? forecastStartDate
+                    : new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 0, 0, 0);
+                const endOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 23, 59, 59);
+                initialRange = [startOfDay, endOfDay];
+            }
+
             const layout = {
                 title: false,
-                height: 400,
-                margin: { t: 20, b: 50, l: 50, r: 20 },
+                height: 380,
+                margin: { t: 45, b: 50, l: 45, r: 20 },
                 xaxis: { 
                     type: 'date',
-                    range: [times[0], times[times.length - 1]],
-                    title: 'Time (Local)'
+                    range: initialRange,
+                    title: 'Time (Local)',
+                    hoverformat: '%a %b %e, %I:%M %p'
                 },
                 yaxis: { 
                     title: 'Wind Speed (mph)',
@@ -247,23 +296,95 @@
                 shapes: [
                     {
                         type: 'line',
-                        x0: times[0],
-                        x1: times[times.length - 1],
+                        xref: 'paper',
+                        x0: 0,
+                        x1: 1,
                         y0: 10,
                         y1: 10,
                         line: {
-                            color: 'rgba(0, 0, 0, 0.5)',
-                            width: 2,
+                            color: 'rgba(0, 0, 0, 0.4)',
+                            width: 1.5,
                             dash: 'dot'
                         }
                     }
                 ],
                 hovermode: 'x unified',
-                legend: { orientation: 'h', y: -0.2 }
+                legend: {
+                    orientation: 'h',
+                    x: 0.5,
+                    xanchor: 'center',
+                    y: 1.05,
+                    yanchor: 'bottom',
+                    font: { size: 11 }
+                }
             };
 
             Plotly.newPlot(containerId, traces, layout, {responsive: true});
         }
+
+        let fullTimesRange = null;
+        let forecastStartDate = null;
+        let activeDayChoice = 'all';
+
+        function updateDayButtons(baseDate) {
+            const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            
+            for (let i = 0; i < 3; i++) {
+                const d = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + i);
+                const dayName = days[d.getDay()];
+                const monthName = months[d.getMonth()];
+                const dateNum = d.getDate();
+                const btn = document.getElementById(`btn-day-${i}`);
+                if (btn) {
+                    if (i === 0) {
+                        btn.innerText = `Today (${dayName} ${monthName} ${dateNum})`;
+                    } else {
+                        btn.innerText = `${dayName}, ${monthName} ${dateNum}`;
+                    }
+                }
+            }
+        }
+
+        function zoomToDay(choice) {
+            activeDayChoice = choice;
+
+            // Update button styles
+            document.querySelectorAll('.day-btn').forEach(btn => btn.classList.remove('active'));
+            if (choice === 'all') {
+                const btnAll = document.getElementById('btn-day-all');
+                if (btnAll) btnAll.classList.add('active');
+            } else {
+                const btn = document.getElementById(`btn-day-${choice}`);
+                if (btn) btn.classList.add('active');
+            }
+
+            if (!fullTimesRange || !forecastStartDate) return;
+
+            let targetRange;
+            if (choice === 'all') {
+                targetRange = fullTimesRange;
+            } else {
+                const targetDate = new Date(forecastStartDate.getFullYear(), forecastStartDate.getMonth(), forecastStartDate.getDate() + choice);
+                const startOfDay = choice === 0
+                    ? forecastStartDate
+                    : new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 0, 0, 0);
+                const endOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 23, 59, 59);
+                targetRange = [startOfDay, endOfDay];
+            }
+
+            locations.forEach((loc, i) => {
+                const plotElem = document.getElementById(`plot-${i}`);
+                if (plotElem && plotElem.data) {
+                    Plotly.relayout(plotElem, {
+                        'xaxis.range': targetRange
+                    });
+                }
+            });
+        }
+
+        // Initialize button labels with current local date on load
+        updateDayButtons(new Date());
 
         async function loadAllData() {
             const btn = document.getElementById('loadBtn');
@@ -284,6 +405,17 @@
             // Fetch in parallel
             const fetchPromises = locations.map(loc => fetchLocationData(loc));
             const results = await Promise.all(fetchPromises);
+
+            // Determine base date and range from first valid result
+            for (let res of results) {
+                if (res.omData && res.omData.hourly && res.omData.hourly.time && res.omData.hourly.time.length > 0) {
+                    const times = res.omData.hourly.time.map(t => new Date(t + 'Z'));
+                    fullTimesRange = [times[0], times[times.length - 1]];
+                    forecastStartDate = times[0];
+                    updateDayButtons(forecastStartDate);
+                    break;
+                }
+            }
 
             // Render
             results.forEach((res, i) => {
