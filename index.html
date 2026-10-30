@@ -100,6 +100,70 @@
             border-radius: 6px;
             margin-top: 1rem;
         }
+        .model-info-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            border: 1px solid #e2e8f0;
+            padding: 1rem 1.25rem;
+            margin-bottom: 2rem;
+            box-sizing: border-box;
+        }
+        .model-info-header {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #334155;
+            margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            border-bottom: 1px solid #f1f5f9;
+            padding-bottom: 0.5rem;
+        }
+        .model-info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 0.75rem;
+        }
+        .model-badge {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 0.6rem 0.8rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        .model-badge-header {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            font-weight: 600;
+            font-size: 0.88rem;
+            color: #0f172a;
+        }
+        .model-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+        }
+        .model-time {
+            font-size: 0.82rem;
+            color: #475569;
+        }
+        .model-cycle {
+            font-size: 0.75rem;
+            background: #e2e8f0;
+            color: #475569;
+            padding: 1px 6px;
+            border-radius: 4px;
+            margin-left: auto;
+            font-weight: 500;
+        }
     </style>
 </head>
 <body>
@@ -118,6 +182,8 @@
             <button class="day-btn active" id="btn-day-all" onclick="zoomToDay('all')">All 72h</button>
         </div>
     </div>
+
+    <div id="modelRunInfo" class="model-info-container" style="display: none;"></div>
 
     <div id="dashboard"></div>
 
@@ -386,6 +452,90 @@
         // Initialize button labels with current local date on load
         updateDayButtons(new Date());
 
+        async function fetchModelMetadata() {
+            const metaEndpoints = {
+                'HRRR': 'https://api.open-meteo.com/data/ncep_hrrr_conus/static/meta.json',
+                'ECMWF': 'https://api.open-meteo.com/data/ecmwf_ifs025/static/meta.json',
+                'ICON': 'https://api.open-meteo.com/data/dwd_icon/static/meta.json',
+                'GEM': 'https://api.open-meteo.com/data/cmc_gem_rdps_10km/static/meta.json'
+            };
+
+            const results = {};
+            await Promise.all(Object.entries(metaEndpoints).map(async ([model, url]) => {
+                try {
+                    const res = await fetch(url);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.last_run_initialisation_time) {
+                            results[model] = new Date(data.last_run_initialisation_time * 1000);
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`Failed to fetch metadata for ${model}`, e);
+                }
+            }));
+            return results;
+        }
+
+        function formatLocalDateTime(date) {
+            if (!date || isNaN(date.getTime())) return 'Unavailable';
+            return date.toLocaleString('en-US', {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+                timeZoneName: 'short'
+            });
+        }
+
+        function getUtcRun(date) {
+            if (!date || isNaN(date.getTime())) return '';
+            const h = String(date.getUTCHours()).padStart(2, '0');
+            return `${h}z`;
+        }
+
+        function displayModelRunInfo(metaDates, nwsDate) {
+            const container = document.getElementById('modelRunInfo');
+            if (!container) return;
+
+            const models = [
+                { label: 'HRRR', color: '#ef4444', date: metaDates['HRRR'], showCycle: true },
+                { label: 'NBM', color: '#3b82f6', date: nwsDate, showCycle: false, sublabel: 'NWS Updated' },
+                { label: 'ECMWF IFS 9km', color: '#10b981', date: metaDates['ECMWF'], showCycle: true },
+                { label: 'ICON13', color: '#f59e0b', date: metaDates['ICON'], showCycle: true },
+                { label: 'GEM Regional', color: '#8b5cf6', date: metaDates['GEM'], showCycle: true }
+            ];
+
+            const badgesHtml = models.map(m => {
+                const timeStr = formatLocalDateTime(m.date);
+                const tagStr = m.showCycle && m.date
+                    ? `<span class="model-cycle">${getUtcRun(m.date)} Run</span>`
+                    : (m.sublabel ? `<span class="model-cycle">${m.sublabel}</span>` : '');
+                return `
+                    <div class="model-badge">
+                        <div class="model-badge-header">
+                            <span class="model-dot" style="background-color: ${m.color};"></span>
+                            <span>${m.label}</span>
+                            ${tagStr}
+                        </div>
+                        <div class="model-time">${timeStr}</div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = `
+                <div class="model-info-header">
+                    <span>Model Update Times</span>
+                </div>
+                <div class="model-info-grid">
+                    ${badgesHtml}
+                </div>
+            `;
+            container.style.display = 'block';
+        }
+
         async function loadAllData() {
             const btn = document.getElementById('loadBtn');
             const dashboard = document.getElementById('dashboard');
@@ -402,9 +552,26 @@
                 dashboard.appendChild(wrapper);
             });
 
-            // Fetch in parallel
+            // Fetch location data and model run metadata in parallel
             const fetchPromises = locations.map(loc => fetchLocationData(loc));
-            const results = await Promise.all(fetchPromises);
+            const metaPromise = fetchModelMetadata();
+
+            const [results, metaResults] = await Promise.all([
+                Promise.all(fetchPromises),
+                metaPromise
+            ]);
+
+            // Determine NWS update timestamp from first valid location with NWS data
+            let nwsUpdateTime = null;
+            for (let res of results) {
+                if (res.nwsData && res.nwsData.updateTime) {
+                    nwsUpdateTime = new Date(res.nwsData.updateTime);
+                    break;
+                }
+            }
+
+            // Display model run info banner
+            displayModelRunInfo(metaResults, nwsUpdateTime);
 
             // Determine base date and range from first valid result
             for (let res of results) {
