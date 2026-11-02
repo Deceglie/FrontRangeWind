@@ -80,6 +80,52 @@
             border-color: #0052a3;
             font-weight: 600;
         }
+        .controls-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 1.5rem;
+            width: 100%;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+        .control-label {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .segmented-control {
+            display: inline-flex;
+            background: #e2e8f0;
+            border-radius: 8px;
+            padding: 3px;
+            gap: 3px;
+        }
+        .segment-btn {
+            padding: 0.55rem 1.1rem;
+            background: transparent;
+            color: #475569;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .segment-btn:hover {
+            color: #0f172a;
+        }
+        .segment-btn.active {
+            background-color: #ffffff;
+            color: #0066cc;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+        }
         .plot-container {
             background: white;
             padding: 1.25rem 1rem 1rem 1rem;
@@ -170,16 +216,28 @@
 
     <div class="header">
         <h1>Denver Area Wind Model Comparison</h1>
-        <p>Comparing 72-hour forecast wind speeds across multiple models (HRRR, NBM, ECMWF, ICON, GEM)</p>
+        <p id="headerSubtitle">Comparing 72-hour forecast wind speeds across multiple models (HRRR, NBM, ECMWF, ICON, GEM)</p>
     </div>
 
     <div class="controls">
         <button id="loadBtn" class="main-btn" onclick="loadAllData()">Load Forecast Data</button>
-        <div id="dayButtons" class="day-buttons">
-            <button class="day-btn" id="btn-day-0" onclick="zoomToDay(0)">Today</button>
-            <button class="day-btn" id="btn-day-1" onclick="zoomToDay(1)">Day 2</button>
-            <button class="day-btn" id="btn-day-2" onclick="zoomToDay(2)">Day 3</button>
-            <button class="day-btn active" id="btn-day-all" onclick="zoomToDay('all')">All 72h</button>
+        <div class="controls-toolbar">
+            <div class="control-group">
+                <span class="control-label">Metric</span>
+                <div class="segmented-control">
+                    <button class="segment-btn active" id="btn-metric-speed" onclick="switchMetric('speed')">Wind Speed</button>
+                    <button class="segment-btn" id="btn-metric-gust" onclick="switchMetric('gust')">Wind Gusts</button>
+                </div>
+            </div>
+            <div class="control-group">
+                <span class="control-label">Range</span>
+                <div id="dayButtons" class="day-buttons">
+                    <button class="day-btn" id="btn-day-0" onclick="zoomToDay(0)">Today</button>
+                    <button class="day-btn" id="btn-day-1" onclick="zoomToDay(1)">Day 2</button>
+                    <button class="day-btn" id="btn-day-2" onclick="zoomToDay(2)">Day 3</button>
+                    <button class="day-btn active" id="btn-day-all" onclick="zoomToDay('all')">All 72h</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -224,9 +282,52 @@
             return null;
         }
 
+        // Flow vector convention: arrow points in the direction the wind is blowing towards
+        function formatWindDir(degrees) {
+            if (degrees === null || degrees === undefined || isNaN(degrees)) return '';
+            const deg = (Number(degrees) % 360 + 360) % 360;
+            const targetArrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
+            return targetArrows[Math.round(((deg + 180) % 360) / 45) % 8];
+        }
+
+        function getOMValues(omHourly, speedKey, gustKey) {
+            if (currentMetric === 'gust' && omHourly[gustKey]) {
+                return omHourly[gustKey].map((g, i) => (g !== null && g !== undefined) ? g : (omHourly[speedKey] ? omHourly[speedKey][i] : null));
+            }
+            return omHourly[speedKey] || [];
+        }
+
+        let currentMetric = 'speed';
+        let cachedForecastData = null;
+
+        function switchMetric(metric) {
+            if (currentMetric === metric) return;
+            currentMetric = metric;
+
+            const btnSpeed = document.getElementById('btn-metric-speed');
+            const btnGust = document.getElementById('btn-metric-gust');
+            if (btnSpeed && btnGust) {
+                btnSpeed.classList.toggle('active', metric === 'speed');
+                btnGust.classList.toggle('active', metric === 'gust');
+            }
+
+            const subtitle = document.getElementById('headerSubtitle');
+            if (subtitle) {
+                subtitle.innerText = metric === 'gust'
+                    ? 'Comparing 72-hour forecast wind gusts across multiple models (HRRR, NBM, ECMWF, ICON, GEM)'
+                    : 'Comparing 72-hour forecast wind speeds across multiple models (HRRR, NBM, ECMWF, ICON, GEM)';
+            }
+
+            if (cachedForecastData && cachedForecastData.length > 0) {
+                cachedForecastData.forEach((res, i) => {
+                    createPlot(`plot-${i}`, res);
+                });
+            }
+        }
+
         async function fetchLocationData(loc) {
             // 1. Open-Meteo for HRRR, ECMWF, ICON, GEM
-            const omParams = `hourly=wind_speed_10m&models=gfs_hrrr,ecmwf_ifs025,icon_global,gem_regional&forecast_hours=72&wind_speed_unit=mph&timezone=UTC`;
+            const omParams = `hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&models=gfs_hrrr,ecmwf_ifs025,icon_global,gem_regional&forecast_hours=72&wind_speed_unit=mph&timezone=UTC`;
             const omUrl = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&${omParams}`;
             
             let omData = null;
@@ -280,57 +381,87 @@
             };
 
             if (omData.hourly.wind_speed_10m_gfs_hrrr) {
+                const yVals = getOMValues(omData.hourly, 'wind_speed_10m_gfs_hrrr', 'wind_gusts_10m_gfs_hrrr');
+                const custom = (omData.hourly.wind_direction_10m_gfs_hrrr || []).map(d => formatWindDir(d));
                 traces.push({
                     x: times,
-                    y: omData.hourly.wind_speed_10m_gfs_hrrr,
+                    y: yVals,
+                    customdata: custom,
                     name: 'HRRR',
                     type: 'scatter', mode: 'lines',
-                    line: { color: colors['HRRR'], width: 2 }
+                    line: { color: colors['HRRR'], width: 2 },
+                    hovertemplate: '%{y:.1f} mph %{customdata}<extra></extra>'
                 });
             }
 
             // NWS Data (NBM)
             if (nwsData && nwsData.windSpeed) {
-                const nbmWind = times.map(d => {
-                    let val = getNWSValueForTime(nwsData.windSpeed, d.getTime());
+                const nbmVals = times.map(d => {
+                    let val = null;
+                    if (currentMetric === 'gust') {
+                        val = getNWSValueForTime(nwsData.windGust, d.getTime());
+                        if (val === null) {
+                            val = getNWSValueForTime(nwsData.windSpeed, d.getTime());
+                        }
+                    } else {
+                        val = getNWSValueForTime(nwsData.windSpeed, d.getTime());
+                    }
                     return val !== null ? val * 0.621371 : null; // km/h to mph
+                });
+                const custom = times.map(d => {
+                    const dir = getNWSValueForTime(nwsData.windDirection, d.getTime());
+                    return formatWindDir(dir);
                 });
                 traces.push({
                     x: times,
-                    y: nbmWind,
+                    y: nbmVals,
+                    customdata: custom,
                     name: 'NBM',
                     type: 'scatter', mode: 'lines',
-                    line: { color: colors['NBM'], width: 2, dash: 'dash' }
+                    line: { color: colors['NBM'], width: 2, dash: 'dash' },
+                    hovertemplate: '%{y:.1f} mph %{customdata}<extra></extra>'
                 });
             }
 
             if (omData.hourly.wind_speed_10m_ecmwf_ifs025) {
+                const yVals = getOMValues(omData.hourly, 'wind_speed_10m_ecmwf_ifs025', 'wind_gusts_10m_ecmwf_ifs025');
+                const custom = (omData.hourly.wind_direction_10m_ecmwf_ifs025 || []).map(d => formatWindDir(d));
                 traces.push({
                     x: times,
-                    y: omData.hourly.wind_speed_10m_ecmwf_ifs025,
+                    y: yVals,
+                    customdata: custom,
                     name: 'ECMWF IFS 9km',
                     type: 'scatter', mode: 'lines',
-                    line: { color: colors['ECMWF'], width: 2 }
+                    line: { color: colors['ECMWF'], width: 2 },
+                    hovertemplate: '%{y:.1f} mph %{customdata}<extra></extra>'
                 });
             }
 
             if (omData.hourly.wind_speed_10m_icon_global) {
+                const yVals = getOMValues(omData.hourly, 'wind_speed_10m_icon_global', 'wind_gusts_10m_icon_global');
+                const custom = (omData.hourly.wind_direction_10m_icon_global || []).map(d => formatWindDir(d));
                 traces.push({
                     x: times,
-                    y: omData.hourly.wind_speed_10m_icon_global,
+                    y: yVals,
+                    customdata: custom,
                     name: 'ICON13',
                     type: 'scatter', mode: 'lines',
-                    line: { color: colors['ICON'], width: 2 }
+                    line: { color: colors['ICON'], width: 2 },
+                    hovertemplate: '%{y:.1f} mph %{customdata}<extra></extra>'
                 });
             }
 
             if (omData.hourly.wind_speed_10m_gem_regional) {
+                const yVals = getOMValues(omData.hourly, 'wind_speed_10m_gem_regional', 'wind_gusts_10m_gem_regional');
+                const custom = (omData.hourly.wind_direction_10m_gem_regional || []).map(d => formatWindDir(d));
                 traces.push({
                     x: times,
-                    y: omData.hourly.wind_speed_10m_gem_regional,
+                    y: yVals,
+                    customdata: custom,
                     name: 'GEM Regional',
                     type: 'scatter', mode: 'lines',
-                    line: { color: colors['GEM'], width: 2 }
+                    line: { color: colors['GEM'], width: 2 },
+                    hovertemplate: '%{y:.1f} mph %{customdata}<extra></extra>'
                 });
             }
 
@@ -345,6 +476,19 @@
                 initialRange = [startOfDay, endOfDay];
             }
 
+            let maxY = 0;
+            traces.forEach(t => {
+                if (t.y && Array.isArray(t.y)) {
+                    for (let val of t.y) {
+                        if (typeof val === 'number' && !isNaN(val) && val > maxY) {
+                            maxY = val;
+                        }
+                    }
+                }
+            });
+            const defaultMax = currentMetric === 'gust' ? 40 : 30;
+            const yTop = Math.max(defaultMax, Math.ceil(maxY / 5) * 5 + 5);
+
             const layout = {
                 title: false,
                 height: 380,
@@ -356,8 +500,8 @@
                     hoverformat: '%a %b %e, %I:%M %p'
                 },
                 yaxis: { 
-                    title: 'Wind Speed (mph)',
-                    range: [0, 30]
+                    title: currentMetric === 'gust' ? 'Wind Gust (mph)' : 'Wind Speed (mph)',
+                    range: [0, yTop]
                 },
                 shapes: [
                     {
@@ -385,7 +529,7 @@
                 }
             };
 
-            Plotly.newPlot(containerId, traces, layout, {responsive: true});
+            Plotly.react(containerId, traces, layout, {responsive: true});
         }
 
         let fullTimesRange = null;
@@ -583,6 +727,9 @@
                     break;
                 }
             }
+
+            // Cache data globally for metric switching
+            cachedForecastData = results;
 
             // Render
             results.forEach((res, i) => {
