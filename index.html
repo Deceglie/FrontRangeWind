@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Denver Area Wind Model Comparison</title>
+    <title>Denver Area Wind Model Comparison (RRFS)</title>
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
     <style>
         body {
@@ -216,7 +216,7 @@
 
     <div class="header">
         <h1>Denver Area Wind Model Comparison</h1>
-        <p id="headerSubtitle">Comparing 72-hour forecast wind speeds across multiple models (HRRR, NBM, ECMWF, ICON, GEM)</p>
+        <p id="headerSubtitle">Comparing 72-hour forecast wind speeds across multiple models (RRFS, NBM, ECMWF, ICON, GEM)</p>
     </div>
 
     <div class="controls">
@@ -314,8 +314,8 @@
             const subtitle = document.getElementById('headerSubtitle');
             if (subtitle) {
                 subtitle.innerText = metric === 'gust'
-                    ? 'Comparing 72-hour forecast wind gusts across multiple models (HRRR, NBM, ECMWF, ICON, GEM)'
-                    : 'Comparing 72-hour forecast wind speeds across multiple models (HRRR, NBM, ECMWF, ICON, GEM)';
+                    ? 'Comparing 72-hour forecast wind gusts across multiple models (RRFS, NBM, ECMWF, ICON, GEM)'
+                    : 'Comparing 72-hour forecast wind speeds across multiple models (RRFS, NBM, ECMWF, ICON, GEM)';
             }
 
             if (cachedForecastData && cachedForecastData.length > 0) {
@@ -326,8 +326,8 @@
         }
 
         async function fetchLocationData(loc) {
-            // 1. Open-Meteo for HRRR, ECMWF, ICON, GEM
-            const omParams = `hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&models=gfs_hrrr,ecmwf_ifs025,icon_global,gem_regional&forecast_hours=72&wind_speed_unit=mph&timezone=UTC`;
+            // 1. Open-Meteo for RRFS, ECMWF, ICON, GEM
+            const omParams = `hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&models=ncep_rrfs_conus,ecmwf_ifs025,icon_global,gem_regional&forecast_hours=72&wind_speed_unit=mph&timezone=UTC`;
             const omUrl = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&${omParams}`;
             
             let omData = null;
@@ -373,23 +373,24 @@
             // Build traces
             const traces = [];
             const colors = {
-                'HRRR': '#ef4444', // Red
-                'NBM': '#3b82f6', // Blue
+                'RRFS': '#ef4444', // Red
+                'NBM': '#3b82f6',  // Blue
                 'ECMWF': '#10b981', // Green
-                'ICON': '#f59e0b', // Yellow
-                'GEM': '#8b5cf6'  // Purple
+                'ICON': '#f59e0b',  // Yellow
+                'GEM': '#8b5cf6'   // Purple
             };
 
-            if (omData.hourly.wind_speed_10m_gfs_hrrr) {
-                const yVals = getOMValues(omData.hourly, 'wind_speed_10m_gfs_hrrr', 'wind_gusts_10m_gfs_hrrr');
-                const custom = (omData.hourly.wind_direction_10m_gfs_hrrr || []).map(d => formatWindDir(d));
+            // RRFS (NOAA Rapid Refresh Forecast System)
+            if (omData.hourly.wind_speed_10m_ncep_rrfs_conus) {
+                const yVals = getOMValues(omData.hourly, 'wind_speed_10m_ncep_rrfs_conus', 'wind_gusts_10m_ncep_rrfs_conus');
+                const custom = (omData.hourly.wind_direction_10m_ncep_rrfs_conus || []).map(d => formatWindDir(d));
                 traces.push({
                     x: times,
                     y: yVals,
                     customdata: custom,
-                    name: 'HRRR',
+                    name: 'RRFS',
                     type: 'scatter', mode: 'lines',
-                    line: { color: colors['HRRR'], width: 2 },
+                    line: { color: colors['RRFS'], width: 2 },
                     hovertemplate: '%{y:.1f} mph %{customdata}<extra></extra>'
                 });
             }
@@ -423,6 +424,7 @@
                 });
             }
 
+            // ECMWF IFS 9km
             if (omData.hourly.wind_speed_10m_ecmwf_ifs025) {
                 const yVals = getOMValues(omData.hourly, 'wind_speed_10m_ecmwf_ifs025', 'wind_gusts_10m_ecmwf_ifs025');
                 const custom = (omData.hourly.wind_direction_10m_ecmwf_ifs025 || []).map(d => formatWindDir(d));
@@ -437,6 +439,7 @@
                 });
             }
 
+            // ICON13
             if (omData.hourly.wind_speed_10m_icon_global) {
                 const yVals = getOMValues(omData.hourly, 'wind_speed_10m_icon_global', 'wind_gusts_10m_icon_global');
                 const custom = (omData.hourly.wind_direction_10m_icon_global || []).map(d => formatWindDir(d));
@@ -451,6 +454,7 @@
                 });
             }
 
+            // GEM Regional
             if (omData.hourly.wind_speed_10m_gem_regional) {
                 const yVals = getOMValues(omData.hourly, 'wind_speed_10m_gem_regional', 'wind_gusts_10m_gem_regional');
                 const custom = (omData.hourly.wind_direction_10m_gem_regional || []).map(d => formatWindDir(d));
@@ -598,7 +602,7 @@
 
         async function fetchModelMetadata() {
             const metaEndpoints = {
-                'HRRR': 'https://api.open-meteo.com/data/ncep_hrrr_conus/static/meta.json',
+                'RRFS': 'https://api.open-meteo.com/data/ncep_rrfs_conus/static/meta.json',
                 'ECMWF': 'https://api.open-meteo.com/data/ecmwf_ifs025/static/meta.json',
                 'ICON': 'https://api.open-meteo.com/data/dwd_icon/static/meta.json',
                 'GEM': 'https://api.open-meteo.com/data/cmc_gem_rdps_10km/static/meta.json'
@@ -610,9 +614,10 @@
                     const res = await fetch(url);
                     if (res.ok) {
                         const data = await res.json();
-                        if (data.last_run_initialisation_time) {
-                            results[model] = new Date(data.last_run_initialisation_time * 1000);
-                        }
+                        results[model] = {
+                            initDate: data.last_run_initialisation_time ? new Date(data.last_run_initialisation_time * 1000) : null,
+                            modDate: (data.last_run_modification_time || data.last_run_availability_time) ? new Date((data.last_run_modification_time || data.last_run_availability_time) * 1000) : null
+                        };
                     }
                 } catch (e) {
                     console.warn(`Failed to fetch metadata for ${model}`, e);
@@ -634,6 +639,17 @@
             });
         }
 
+        function formatRelativeTime(date) {
+            if (!date || isNaN(date.getTime())) return '';
+            const diffMs = Date.now() - date.getTime();
+            if (diffMs < 0) return '';
+            const mins = Math.floor(diffMs / 60000);
+            if (mins < 60) return `(${mins}m ago)`;
+            const hours = Math.floor(mins / 60);
+            const remMins = mins % 60;
+            return `(${hours}h ${remMins}m ago)`;
+        }
+
         function getUtcRun(date) {
             if (!date || isNaN(date.getTime())) return '';
             const h = String(date.getUTCHours()).padStart(2, '0');
@@ -645,17 +661,48 @@
             if (!container) return;
 
             const models = [
-                { label: 'HRRR', color: '#ef4444', date: metaDates['HRRR'], showCycle: true },
-                { label: 'NBM', color: '#3b82f6', date: nwsDate, showCycle: false, sublabel: 'NWS Updated' },
-                { label: 'ECMWF IFS 9km', color: '#10b981', date: metaDates['ECMWF'], showCycle: true },
-                { label: 'ICON13', color: '#f59e0b', date: metaDates['ICON'], showCycle: true },
-                { label: 'GEM Regional', color: '#8b5cf6', date: metaDates['GEM'], showCycle: true }
+                { 
+                    label: 'RRFS', 
+                    color: '#ef4444', 
+                    cycleDate: metaDates['RRFS'] ? metaDates['RRFS'].initDate : null, 
+                    updateDate: metaDates['RRFS'] ? (metaDates['RRFS'].modDate || metaDates['RRFS'].initDate) : null, 
+                    showCycle: true 
+                },
+                { 
+                    label: 'NBM', 
+                    color: '#3b82f6', 
+                    updateDate: nwsDate, 
+                    showCycle: false, 
+                    sublabel: 'NWS Updated' 
+                },
+                { 
+                    label: 'ECMWF IFS 9km', 
+                    color: '#10b981', 
+                    cycleDate: metaDates['ECMWF'] ? metaDates['ECMWF'].initDate : null, 
+                    updateDate: metaDates['ECMWF'] ? (metaDates['ECMWF'].modDate || metaDates['ECMWF'].initDate) : null, 
+                    showCycle: true 
+                },
+                { 
+                    label: 'ICON13', 
+                    color: '#f59e0b', 
+                    cycleDate: metaDates['ICON'] ? metaDates['ICON'].initDate : null, 
+                    updateDate: metaDates['ICON'] ? (metaDates['ICON'].modDate || metaDates['ICON'].initDate) : null, 
+                    showCycle: true 
+                },
+                { 
+                    label: 'GEM Regional', 
+                    color: '#8b5cf6', 
+                    cycleDate: metaDates['GEM'] ? metaDates['GEM'].initDate : null, 
+                    updateDate: metaDates['GEM'] ? (metaDates['GEM'].modDate || metaDates['GEM'].initDate) : null, 
+                    showCycle: true 
+                }
             ];
 
             const badgesHtml = models.map(m => {
-                const timeStr = formatLocalDateTime(m.date);
-                const tagStr = m.showCycle && m.date
-                    ? `<span class="model-cycle">${getUtcRun(m.date)} Run</span>`
+                const timeStr = formatLocalDateTime(m.updateDate);
+                const relStr = formatRelativeTime(m.updateDate);
+                const tagStr = m.showCycle && m.cycleDate
+                    ? `<span class="model-cycle">${getUtcRun(m.cycleDate)} Run</span>`
                     : (m.sublabel ? `<span class="model-cycle">${m.sublabel}</span>` : '');
                 return `
                     <div class="model-badge">
@@ -664,7 +711,7 @@
                             <span>${m.label}</span>
                             ${tagStr}
                         </div>
-                        <div class="model-time">${timeStr}</div>
+                        <div class="model-time">${timeStr} <span style="color:#64748b;font-size:0.75rem;">${relStr}</span></div>
                     </div>
                 `;
             }).join('');
@@ -739,6 +786,18 @@
 
             btn.innerText = "Refresh Data";
             btn.disabled = false;
+        }
+
+        // Preload model metadata on page load so update times are visible right away
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', async () => {
+                const metaResults = await fetchModelMetadata();
+                displayModelRunInfo(metaResults, null);
+            });
+        } else {
+            fetchModelMetadata().then(metaResults => {
+                displayModelRunInfo(metaResults, null);
+            });
         }
     </script>
 </body>
