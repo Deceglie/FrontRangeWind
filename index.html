@@ -289,8 +289,7 @@
         <div class="controls">
             <button id="rrfsLoadBtn" class="main-btn" onclick="loadRRFSData()">Load 15-Minute RRFS Data</button>
         </div>
-        <p class="forecast-note">RRFS only · 15-minute intervals · 18-hour forecast · model data updated hourly. Wind speed is solid; gusts are dashed.</p>
-        <div id="rrfsModelRunInfo" class="model-info-container" style="display: none;"></div>
+        <p class="forecast-note">RRFS only · 15-minute intervals · 18-hour forecast · once loaded, refreshed hourly while this page is open. Wind speed is solid; gusts are dashed.</p>
         <div id="rrfsDashboard"></div>
     </section>
 
@@ -348,6 +347,8 @@
 
         let currentMetric = 'speed';
         let cachedForecastData = null;
+        let rrfsRefreshTimer = null;
+        let rrfsLoadInProgress = false;
 
         function switchTab(tabName) {
             const isRRFS = tabName === 'rrfs';
@@ -488,7 +489,7 @@
             const params = `minutely_15=wind_speed_10m,wind_direction_10m,wind_gusts_10m&models=ncep_rrfs_conus&forecast_minutely_15=72&wind_speed_unit=mph&timezone=UTC`;
             const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&${params}`;
             try {
-                const data = await fetchWithRetry(url, { cache: 'no-cache' });
+                const data = await fetchWithRetry(url, { cache: 'no-store' });
                 return { loc, data, error: null };
             } catch (error) {
                 console.error(`RRFS 15-minute fetch error for ${loc.name}:`, error);
@@ -828,10 +829,11 @@
             );
             await Promise.all(models.map(async ([model, url]) => {
                 try {
-                    const data = await fetchWithRetry(url, {}, 1, 10000);
+                    const data = await fetchWithRetry(url, { cache: 'no-store' }, 1, 10000);
                     results[model] = {
                         initDate: data.last_run_initialisation_time ? new Date(data.last_run_initialisation_time * 1000) : null,
-                        modDate: (data.last_run_modification_time || data.last_run_availability_time) ? new Date((data.last_run_modification_time || data.last_run_availability_time) * 1000) : null
+                        modDate: (data.last_run_modification_time || data.last_run_availability_time) ? new Date((data.last_run_modification_time || data.last_run_availability_time) * 1000) : null,
+                        availabilityDate: data.last_run_availability_time ? new Date(data.last_run_availability_time * 1000) : null
                     };
                 } catch (e) {
                     console.warn(`Failed to fetch metadata for ${model}`, e);
@@ -941,28 +943,6 @@
             container.style.display = 'block';
         }
 
-        function displayRRFSModelRunInfo(metaDates) {
-            const container = document.getElementById('rrfsModelRunInfo');
-            const rrfs = metaDates['RRFS'];
-            const updateDate = rrfs ? (rrfs.modDate || rrfs.initDate) : null;
-            container.innerHTML = `
-                <div class="model-info-header">
-                    <span>RRFS Model Update Time</span>
-                </div>
-                <div class="model-info-grid">
-                    <div class="model-badge">
-                        <div class="model-badge-header">
-                            <span class="model-dot" style="background-color: #ef4444;"></span>
-                            <span>RRFS 15-minute</span>
-                            ${rrfs && rrfs.initDate ? `<span class="model-cycle">${getUtcRun(rrfs.initDate)} Run</span>` : ''}
-                        </div>
-                        <div class="model-time">${formatLocalDateTime(updateDate)} <span style="color:#64748b;font-size:0.75rem;">${formatRelativeTime(updateDate)}</span></div>
-                    </div>
-                </div>
-            `;
-            container.style.display = 'block';
-        }
-
         async function loadAllData() {
             const btn = document.getElementById('loadBtn');
             const dashboard = document.getElementById('dashboard');
@@ -1025,6 +1005,8 @@
         }
 
         async function loadRRFSData() {
+            if (rrfsLoadInProgress) return;
+            rrfsLoadInProgress = true;
             const btn = document.getElementById('rrfsLoadBtn');
             const dashboard = document.getElementById('rrfsDashboard');
 
@@ -1039,19 +1021,19 @@
             });
 
             try {
-                const [results, metaResults] = await Promise.all([
-                    Promise.all(locations.map(fetchRRFSLocationData)),
-                    fetchModelMetadata(['RRFS'])
-                ]);
-                displayRRFSModelRunInfo(metaResults);
+                const results = await Promise.all(locations.map(fetchRRFSLocationData));
                 results.forEach((result, i) => createRRFSPlot(`rrfs-plot-${i}`, result));
                 btn.innerText = 'Refresh 15-Minute RRFS Data';
+                if (rrfsRefreshTimer === null) {
+                    rrfsRefreshTimer = setInterval(loadRRFSData, 60 * 60 * 1000);
+                }
             } catch (error) {
-                console.error('Failed to load RRFS model metadata:', error);
-                dashboard.innerHTML = `<div class="error">Failed to load RRFS update information: ${error.message}</div>`;
+                console.error('Failed to render RRFS forecast data:', error);
+                dashboard.innerHTML = `<div class="error">Failed to load RRFS forecast data: ${error.message}</div>`;
                 btn.innerText = 'Retry 15-Minute RRFS Data';
             } finally {
                 btn.disabled = false;
+                rrfsLoadInProgress = false;
             }
         }
 
