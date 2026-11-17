@@ -325,8 +325,8 @@
             }
         }
 
-        // Resilient fetch wrapper with timeout and automatic retry
-        async function fetchWithRetry(url, options = {}, retries = 2, timeoutMs = 8000) {
+        // Keep the timeout active through response parsing; forecast responses can be slow to stream.
+        async function fetchWithRetry(url, options = {}, retries = 2, timeoutMs = 20000) {
             let lastError = null;
             for (let attempt = 0; attempt <= retries; attempt++) {
                 const controller = new AbortController();
@@ -342,36 +342,47 @@
                         signal: controller.signal
                     };
                     const res = await fetch(url, fetchOptions);
-                    clearTimeout(timer);
 
                     let data = null;
                     try {
                         data = await res.json();
-                    } catch (parseErr) {
+                    } catch {
                         if (!res.ok) {
-                            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                            const error = new Error(`HTTP ${res.status}: ${res.statusText}`);
+                            error.status = res.status;
+                            throw error;
                         }
                         throw new Error('Failed to parse JSON response from server.');
                     }
 
                     if (!res.ok) {
                         const reason = (data && data.reason) ? data.reason : `HTTP ${res.status} ${res.statusText}`;
-                        throw new Error(reason);
+                        const error = new Error(reason);
+                        error.status = res.status;
+                        throw error;
                     }
                     if (data && data.error) {
-                        throw new Error(data.reason || 'Open-Meteo returned an error.');
+                        const error = new Error(data.reason || 'API returned an error.');
+                        error.status = res.status;
+                        throw error;
                     }
                     return data;
                 } catch (err) {
                     clearTimeout(timer);
                     if (didTimeout) {
-                        lastError = new Error(`Connection timed out (${timeoutMs / 1000}s) reaching Open-Meteo API.`);
+                        lastError = new Error(`Request timed out after ${timeoutMs / 1000}s.`);
                     } else {
                         lastError = err;
                     }
-                    if (attempt < retries) {
-                        await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
+                    const status = err && typeof err.status === 'number' ? err.status : null;
+                    const retryable = didTimeout || status === null || status === 429 || status >= 500;
+                    if (!retryable || attempt >= retries) {
+                        throw lastError;
                     }
+                    const backoffMs = 750 * (2 ** attempt) + Math.random() * 250;
+                    await new Promise(resolve => setTimeout(resolve, backoffMs));
+                } finally {
+                    clearTimeout(timer);
                 }
             }
             throw lastError;
@@ -381,38 +392,31 @@
             // 1. Open-Meteo for RRFS, ECMWF, ICON, GEM
             const omParams = `hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&models=ncep_rrfs_conus,ecmwf_ifs025,icon_global,gem_regional&forecast_hours=72&wind_speed_unit=mph&timezone=UTC`;
             const omUrl = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&${omParams}`;
-            
-            let omData = null;
-            let nwsData = null;
 
-            try {
-                omData = await fetchWithRetry(omUrl, { cache: 'no-cache' });
-            } catch (err) {
-                console.error(`OM Fetch Error for ${loc.name}:`, err);
-            }
-
-            // 2. NWS API for NBM
-            try {
-                const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), 8000);
-                const ptRes = await fetch(`https://api.weather.gov/points/${loc.lat},${loc.lon}`, { signal: controller.signal });
-                clearTimeout(timer);
-                if (ptRes.ok) {
-                    const ptJson = await ptRes.json();
-                    const gridUrl = ptJson.properties.forecastGridData;
-                    const controller2 = new AbortController();
-                    const timer2 = setTimeout(() => controller2.abort(), 8000);
-                    const gridRes = await fetch(gridUrl, { signal: controller2.signal });
-                    clearTimeout(timer2);
-                    if (gridRes.ok) {
-                        const gridJson = await gridRes.json();
-                        nwsData = gridJson.properties;
-                    }
+            const omPromise = fetchWithRetry(omUrl, { cache: 'no-cache' })
+                .catch(err => {
+                    console.error(`OM Fetch Error for ${loc.name}:`, err);
+                    return null;
+                });
+            const nwsPromise = (async () => {
+                const ptJson = await fetchWithRetry(
+                    `https://api.weather.gov/points/${loc.lat},${loc.lon}`,
+                    {},
+                    1,
+                    12000
+                );
+                const gridUrl = ptJson?.properties?.forecastGridData;
+                if (!gridUrl) {
+                    throw new Error('NWS points response did not include a forecast grid URL.');
                 }
-            } catch (err) {
+                const gridJson = await fetchWithRetry(gridUrl, {}, 1, 12000);
+                return gridJson?.properties || null;
+            })().catch(err => {
                 console.error(`NWS Fetch Error for ${loc.name}:`, err);
-            }
+                return null;
+            });
 
+            const [omData, nwsData] = await Promise.all([omPromise, nwsPromise]);
             return { loc, omData, nwsData };
         }
 
@@ -668,17 +672,11 @@
             const results = {};
             await Promise.all(Object.entries(metaEndpoints).map(async ([model, url]) => {
                 try {
-                    const controller = new AbortController();
-                    const timer = setTimeout(() => controller.abort(), 6000);
-                    const res = await fetch(url, { signal: controller.signal });
-                    clearTimeout(timer);
-                    if (res.ok) {
-                        const data = await res.json();
-                        results[model] = {
-                            initDate: data.last_run_initialisation_time ? new Date(data.last_run_initialisation_time * 1000) : null,
-                            modDate: (data.last_run_modification_time || data.last_run_availability_time) ? new Date((data.last_run_modification_time || data.last_run_availability_time) * 1000) : null
-                        };
-                    }
+                    const data = await fetchWithRetry(url, {}, 1, 10000);
+                    results[model] = {
+                        initDate: data.last_run_initialisation_time ? new Date(data.last_run_initialisation_time * 1000) : null,
+                        modDate: (data.last_run_modification_time || data.last_run_availability_time) ? new Date((data.last_run_modification_time || data.last_run_availability_time) * 1000) : null
+                    };
                 } catch (e) {
                     console.warn(`Failed to fetch metadata for ${model}`, e);
                 }
