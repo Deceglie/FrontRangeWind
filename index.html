@@ -210,40 +210,89 @@
             margin-left: auto;
             font-weight: 500;
         }
+        .tab-nav {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid #cbd5e1;
+        }
+        .tab-btn {
+            padding: 0.75rem 1.25rem;
+            background: transparent;
+            color: #475569;
+            border: none;
+            border-bottom: 3px solid transparent;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .tab-btn:hover {
+            color: #0f172a;
+        }
+        .tab-btn.active {
+            color: #0066cc;
+            border-bottom-color: #0066cc;
+        }
+        .tab-panel[hidden] {
+            display: none;
+        }
+        .forecast-note {
+            color: #64748b;
+            text-align: center;
+            margin: -0.5rem 0 1.5rem;
+        }
     </style>
 </head>
 <body>
 
     <div class="header">
-        <h1>Denver Area Wind Model Comparison</h1>
+        <h1>Denver Area Wind Forecast</h1>
         <p id="headerSubtitle">Comparing 72-hour forecast wind speeds across multiple models (RRFS, NBM, ECMWF, ICON, GEM)</p>
     </div>
 
-    <div class="controls">
-        <button id="loadBtn" class="main-btn" onclick="loadAllData()">Load Forecast Data</button>
-        <div class="controls-toolbar">
-            <div class="control-group">
-                <span class="control-label">Metric</span>
-                <div class="segmented-control">
-                    <button class="segment-btn active" id="btn-metric-speed" onclick="switchMetric('speed')">Wind Speed</button>
-                    <button class="segment-btn" id="btn-metric-gust" onclick="switchMetric('gust')">Wind Gusts</button>
+    <div class="tab-nav" role="tablist" aria-label="Forecast type">
+        <button class="tab-btn active" id="tab-hourly" role="tab" aria-selected="true" aria-controls="hourlyTabPanel" onclick="switchTab('hourly')">Hourly Model Comparison</button>
+        <button class="tab-btn" id="tab-rrfs" role="tab" aria-selected="false" aria-controls="rrfsTabPanel" onclick="switchTab('rrfs')">15-Minute RRFS</button>
+    </div>
+
+    <section id="hourlyTabPanel" class="tab-panel" role="tabpanel" aria-labelledby="tab-hourly">
+        <div class="controls">
+            <button id="loadBtn" class="main-btn" onclick="loadAllData()">Load Forecast Data</button>
+            <div class="controls-toolbar">
+                <div class="control-group">
+                    <span class="control-label">Metric</span>
+                    <div class="segmented-control">
+                        <button class="segment-btn active" id="btn-metric-speed" onclick="switchMetric('speed')">Wind Speed</button>
+                        <button class="segment-btn" id="btn-metric-gust" onclick="switchMetric('gust')">Wind Gusts</button>
+                    </div>
                 </div>
-            </div>
-            <div class="control-group">
-                <span class="control-label">Range</span>
-                <div id="dayButtons" class="day-buttons">
-                    <button class="day-btn" id="btn-day-0" onclick="zoomToDay(0)">Today</button>
-                    <button class="day-btn" id="btn-day-1" onclick="zoomToDay(1)">Day 2</button>
-                    <button class="day-btn" id="btn-day-2" onclick="zoomToDay(2)">Day 3</button>
-                    <button class="day-btn active" id="btn-day-all" onclick="zoomToDay('all')">All 72h</button>
+                <div class="control-group">
+                    <span class="control-label">Range</span>
+                    <div id="dayButtons" class="day-buttons">
+                        <button class="day-btn" id="btn-day-0" onclick="zoomToDay(0)">Today</button>
+                        <button class="day-btn" id="btn-day-1" onclick="zoomToDay(1)">Day 2</button>
+                        <button class="day-btn" id="btn-day-2" onclick="zoomToDay(2)">Day 3</button>
+                        <button class="day-btn active" id="btn-day-all" onclick="zoomToDay('all')">All 72h</button>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
 
-    <div id="modelRunInfo" class="model-info-container" style="display: none;"></div>
+        <div id="modelRunInfo" class="model-info-container" style="display: none;"></div>
 
-    <div id="dashboard"></div>
+        <div id="dashboard"></div>
+    </section>
+
+    <section id="rrfsTabPanel" class="tab-panel" role="tabpanel" aria-labelledby="tab-rrfs" hidden>
+        <div class="controls">
+            <button id="rrfsLoadBtn" class="main-btn" onclick="loadRRFSData()">Load 15-Minute RRFS Data</button>
+        </div>
+        <p class="forecast-note">RRFS only · 15-minute intervals · 18-hour forecast · model data updated hourly. Wind speed is solid; gusts are dashed.</p>
+        <div id="rrfsModelRunInfo" class="model-info-container" style="display: none;"></div>
+        <div id="rrfsDashboard"></div>
+    </section>
 
     <script>
         const locations = [
@@ -300,19 +349,34 @@
         let currentMetric = 'speed';
         let cachedForecastData = null;
 
+        function switchTab(tabName) {
+            const isRRFS = tabName === 'rrfs';
+            document.getElementById('tab-hourly').classList.toggle('active', !isRRFS);
+            document.getElementById('tab-hourly').setAttribute('aria-selected', String(!isRRFS));
+            document.getElementById('tab-rrfs').classList.toggle('active', isRRFS);
+            document.getElementById('tab-rrfs').setAttribute('aria-selected', String(isRRFS));
+            document.getElementById('hourlyTabPanel').hidden = isRRFS;
+            document.getElementById('rrfsTabPanel').hidden = !isRRFS;
+            document.getElementById('headerSubtitle').innerText = isRRFS
+                ? '15-minute RRFS wind forecasts for each location, through the next 18 hours'
+                : currentMetric === 'gust'
+                    ? 'Comparing 72-hour forecast wind gusts across multiple models (RRFS, NBM, ECMWF, ICON, GEM)'
+                    : 'Comparing 72-hour forecast wind speeds across multiple models (RRFS, NBM, ECMWF, ICON, GEM)';
+        }
+
         function switchMetric(metric) {
             if (currentMetric === metric) return;
             currentMetric = metric;
 
             const btnSpeed = document.getElementById('btn-metric-speed');
             const btnGust = document.getElementById('btn-metric-gust');
-            if (btnSpeed && btnGust) {
-                btnSpeed.classList.toggle('active', metric === 'speed');
-                btnGust.classList.toggle('active', metric === 'gust');
-            }
+            btnSpeed.classList.toggle('active', metric === 'speed');
+            btnGust.classList.toggle('active', metric === 'gust');
 
             const subtitle = document.getElementById('headerSubtitle');
-            if (subtitle) {
+            if (!document.getElementById('rrfsTabPanel').hidden) {
+                subtitle.innerText = '15-minute RRFS wind forecasts for each location, through the next 18 hours';
+            } else {
                 subtitle.innerText = metric === 'gust'
                     ? 'Comparing 72-hour forecast wind gusts across multiple models (RRFS, NBM, ECMWF, ICON, GEM)'
                     : 'Comparing 72-hour forecast wind speeds across multiple models (RRFS, NBM, ECMWF, ICON, GEM)';
@@ -420,11 +484,99 @@
             return { loc, omData, nwsData };
         }
 
+        async function fetchRRFSLocationData(loc) {
+            const params = `minutely_15=wind_speed_10m,wind_direction_10m,wind_gusts_10m&models=ncep_rrfs_conus&forecast_minutely_15=72&wind_speed_unit=mph&timezone=UTC`;
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&${params}`;
+            try {
+                const data = await fetchWithRetry(url, { cache: 'no-cache' });
+                return { loc, data, error: null };
+            } catch (error) {
+                console.error(`RRFS 15-minute fetch error for ${loc.name}:`, error);
+                return { loc, data: null, error };
+            }
+        }
+
+        function clearLoadingPlaceholder(container) {
+            if (container.textContent.trim() === 'Loading...') {
+                container.textContent = '';
+            }
+        }
+
+        function createRRFSPlot(containerId, result) {
+            const container = document.getElementById(containerId);
+            const { loc, data, error } = result;
+            const forecast = data && data.minutely_15;
+            if (!forecast || !forecast.time || forecast.time.length === 0) {
+                const reason = error ? error.message : 'No 15-minute forecast data was returned.';
+                container.innerHTML = `<div class="error">Failed to load RRFS data for ${loc.name}: ${reason}</div>`;
+                return;
+            }
+
+            const times = forecast.time.map(time => new Date(`${time}Z`));
+            const speedValues = forecast.wind_speed_10m || times.map(() => null);
+            const gustValues = forecast.wind_gusts_10m || times.map(() => null);
+            const directions = (forecast.wind_direction_10m || []).map(formatWindDir);
+            const maxValue = [...speedValues, ...gustValues].reduce((max, value) =>
+                typeof value === 'number' && Number.isFinite(value) ? Math.max(max, value) : max, 0);
+
+            const traces = [
+                {
+                    x: times,
+                    y: speedValues,
+                    customdata: directions,
+                    name: 'Wind Speed',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#ef4444', width: 2 },
+                    hovertemplate: '%{y:.1f} mph %{customdata}<extra></extra>'
+                },
+                {
+                    x: times,
+                    y: gustValues,
+                    customdata: directions,
+                    name: 'Wind Gusts',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#ef4444', width: 2, dash: 'dash' },
+                    hovertemplate: '%{y:.1f} mph %{customdata}<extra></extra>'
+                }
+            ];
+            const layout = {
+                height: 380,
+                margin: { t: 35, b: 50, l: 55, r: 20 },
+                xaxis: {
+                    type: 'date',
+                    range: [times[0], times[times.length - 1]],
+                    title: 'Time (Local)',
+                    hoverformat: '%a %b %e, %I:%M %p'
+                },
+                yaxis: {
+                    title: 'Wind Speed / Gust (mph)',
+                    range: [0, Math.max(40, Math.ceil(maxValue / 5) * 5 + 5)]
+                },
+                shapes: [{
+                    type: 'line',
+                    xref: 'paper',
+                    x0: 0,
+                    x1: 1,
+                    y0: 10,
+                    y1: 10,
+                    line: { color: 'rgba(0, 0, 0, 0.4)', width: 1.5, dash: 'dot' }
+                }],
+                hovermode: 'x unified',
+                showlegend: true,
+                legend: { orientation: 'h', x: 0.5, xanchor: 'center', y: 1.05, yanchor: 'bottom' }
+            };
+            clearLoadingPlaceholder(container);
+            Plotly.react(containerId, traces, layout, { responsive: true });
+        }
+
         function createPlot(containerId, dataObj) {
+            const container = document.getElementById(containerId);
             const { loc, omData, nwsData } = dataObj;
             
             if (!omData || !omData.hourly) {
-                document.getElementById(containerId).innerHTML = `<div class="error">Failed to load data for ${loc.name}</div>`;
+                container.innerHTML = `<div class="error">Failed to load data for ${loc.name}</div>`;
                 return;
             }
 
@@ -594,6 +746,7 @@
                 }
             };
 
+            clearLoadingPlaceholder(container);
             Plotly.react(containerId, traces, layout, {responsive: true});
         }
 
@@ -661,7 +814,7 @@
         // Initialize button labels with current local date on load
         updateDayButtons(new Date());
 
-        async function fetchModelMetadata() {
+        async function fetchModelMetadata(modelNames = null) {
             const metaEndpoints = {
                 'RRFS': 'https://openmeteo.s3.amazonaws.com/data/ncep_rrfs_conus/static/meta.json',
                 'ECMWF': 'https://openmeteo.s3.amazonaws.com/data/ecmwf_ifs025/static/meta.json',
@@ -670,7 +823,10 @@
             };
 
             const results = {};
-            await Promise.all(Object.entries(metaEndpoints).map(async ([model, url]) => {
+            const models = Object.entries(metaEndpoints).filter(([model]) =>
+                modelNames === null || modelNames.includes(model)
+            );
+            await Promise.all(models.map(async ([model, url]) => {
                 try {
                     const data = await fetchWithRetry(url, {}, 1, 10000);
                     results[model] = {
@@ -785,6 +941,28 @@
             container.style.display = 'block';
         }
 
+        function displayRRFSModelRunInfo(metaDates) {
+            const container = document.getElementById('rrfsModelRunInfo');
+            const rrfs = metaDates['RRFS'];
+            const updateDate = rrfs ? (rrfs.modDate || rrfs.initDate) : null;
+            container.innerHTML = `
+                <div class="model-info-header">
+                    <span>RRFS Model Update Time</span>
+                </div>
+                <div class="model-info-grid">
+                    <div class="model-badge">
+                        <div class="model-badge-header">
+                            <span class="model-dot" style="background-color: #ef4444;"></span>
+                            <span>RRFS 15-minute</span>
+                            ${rrfs && rrfs.initDate ? `<span class="model-cycle">${getUtcRun(rrfs.initDate)} Run</span>` : ''}
+                        </div>
+                        <div class="model-time">${formatLocalDateTime(updateDate)} <span style="color:#64748b;font-size:0.75rem;">${formatRelativeTime(updateDate)}</span></div>
+                    </div>
+                </div>
+            `;
+            container.style.display = 'block';
+        }
+
         async function loadAllData() {
             const btn = document.getElementById('loadBtn');
             const dashboard = document.getElementById('dashboard');
@@ -844,6 +1022,37 @@
 
             btn.innerText = "Refresh Data";
             btn.disabled = false;
+        }
+
+        async function loadRRFSData() {
+            const btn = document.getElementById('rrfsLoadBtn');
+            const dashboard = document.getElementById('rrfsDashboard');
+
+            btn.disabled = true;
+            btn.innerText = 'Loading RRFS...';
+            dashboard.innerHTML = '';
+            locations.forEach((loc, i) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'plot-container';
+                wrapper.innerHTML = `<div class="plot-title">${loc.name}</div><div id="rrfs-plot-${i}">Loading...</div>`;
+                dashboard.appendChild(wrapper);
+            });
+
+            try {
+                const [results, metaResults] = await Promise.all([
+                    Promise.all(locations.map(fetchRRFSLocationData)),
+                    fetchModelMetadata(['RRFS'])
+                ]);
+                displayRRFSModelRunInfo(metaResults);
+                results.forEach((result, i) => createRRFSPlot(`rrfs-plot-${i}`, result));
+                btn.innerText = 'Refresh 15-Minute RRFS Data';
+            } catch (error) {
+                console.error('Failed to load RRFS model metadata:', error);
+                dashboard.innerHTML = `<div class="error">Failed to load RRFS update information: ${error.message}</div>`;
+                btn.innerText = 'Retry 15-Minute RRFS Data';
+            } finally {
+                btn.disabled = false;
+            }
         }
 
         // Preload model metadata on page load so update times are visible right away
